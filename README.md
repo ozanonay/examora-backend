@@ -46,3 +46,4 @@ Delete a document.
 | `AZURE_STORAGE_CONTAINER` | Blob container name (default: documents) |
 | `API_KEY` | App authentication key |
 | `PORT` | Server port (default: 3000) |
+
