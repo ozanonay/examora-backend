@@ -1,12 +1,18 @@
 const express = require("express");
 const multer = require("multer");
-const { validateApiKey } = require("../middleware/auth");
-const { uploadDocument, listDocuments, deleteDocument } = require("../services/blobStorage");
+const { authenticateRequest } = require("../middleware/auth");
+const { canUploadDocuments } = require("../services/firebase");
+const {
+  uploadDocument,
+  listDocumentsForUser,
+  listSharedDocuments,
+  deleteDocument,
+} = require("../services/blobStorage");
 
 const router = express.Router();
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 20 * 1024 * 1024 },
+  limits: { fileSize: 50 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     if (file.mimetype === "application/pdf") {
       cb(null, true);
@@ -16,11 +22,17 @@ const upload = multer({
   },
 });
 
-// Upload a document
-router.post("/documents", validateApiKey, upload.single("file"), async (req, res) => {
+// Upload a document (pro/premium only)
+router.post("/documents", authenticateRequest, upload.single("file"), async (req, res) => {
   try {
+    const user = req.user;
+
+    if (!canUploadDocuments(user.role)) {
+      return res.status(403).json({ error: "Document upload requires Pro or Premium plan" });
+    }
+
     const file = req.file;
-    const { specialty, userId } = req.body;
+    const { specialty, shared } = req.body;
 
     if (!file) {
       return res.status(400).json({ error: "PDF file is required" });
@@ -29,14 +41,10 @@ router.post("/documents", validateApiKey, upload.single("file"), async (req, res
       return res.status(400).json({ error: "Specialty field is required" });
     }
 
-    console.log(`[upload] ${file.originalname} (${(file.size / 1024).toFixed(0)}KB) → ${specialty}`);
+    console.log(`[${user.uid}] Upload: ${file.originalname} (${(file.size / 1024).toFixed(0)}KB) → ${specialty}`);
 
-    const result = await uploadDocument(
-      file.buffer,
-      file.originalname,
-      specialty,
-      userId || "anonymous"
-    );
+    const isShared = shared === "true";
+    const result = await uploadDocument(file.buffer, file.originalname, specialty, user.uid, isShared);
 
     res.json({
       success: true,
@@ -44,6 +52,7 @@ router.post("/documents", validateApiKey, upload.single("file"), async (req, res
       url: result.url,
       original_name: file.originalname,
       specialty,
+      shared: isShared,
     });
   } catch (err) {
     console.error("Document upload error:", err.message);
@@ -51,22 +60,30 @@ router.post("/documents", validateApiKey, upload.single("file"), async (req, res
   }
 });
 
-// List documents (optionally by specialty)
-router.get("/documents", validateApiKey, async (req, res) => {
+// List documents for current user (own + shared) by specialty
+router.get("/documents", authenticateRequest, async (req, res) => {
   try {
+    const user = req.user;
     const { specialty } = req.query;
-    const docs = await listDocuments(specialty || undefined);
+
+    if (!specialty) {
+      return res.status(400).json({ error: "specialty query parameter is required" });
+    }
+
+    const docs = await listDocumentsForUser(user.uid, specialty);
 
     res.json({
       count: docs.length,
       documents: docs.map((d) => ({
-        blob_name: d.name,
+        blob_name: d.blobName,
         original_name: d.originalName,
         specialty: d.specialty,
         uploaded_by: d.uploadedBy,
         uploaded_at: d.uploadedAt,
+        shared: d.shared,
+        page_count: d.pageCount,
         size: d.size,
-        url: d.url,
+        is_mine: d.uploadedBy === user.uid,
       })),
     });
   } catch (err) {
@@ -75,13 +92,45 @@ router.get("/documents", validateApiKey, async (req, res) => {
   }
 });
 
-// Delete a document (blob name sent in body since it contains slashes)
-router.delete("/documents", validateApiKey, async (req, res) => {
+// List shared/community documents
+router.get("/documents/shared", authenticateRequest, async (req, res) => {
+  try {
+    const { specialty } = req.query;
+    const docs = await listSharedDocuments(specialty || undefined);
+
+    res.json({
+      count: docs.length,
+      documents: docs.map((d) => ({
+        blob_name: d.blobName,
+        original_name: d.originalName,
+        specialty: d.specialty,
+        uploaded_by: d.uploadedBy,
+        uploaded_at: d.uploadedAt,
+        page_count: d.pageCount,
+        size: d.size,
+      })),
+    });
+  } catch (err) {
+    console.error("Shared document list error:", err.message);
+    res.status(500).json({ error: "Failed to list shared documents" });
+  }
+});
+
+// Delete a document (owner only)
+router.delete("/documents", authenticateRequest, async (req, res) => {
   try {
     const { blobName } = req.body;
+    const user = req.user;
+
     if (!blobName) {
       return res.status(400).json({ error: "blobName is required" });
     }
+
+    // Verify ownership: blob path contains userId
+    if (!blobName.includes(`/${user.uid}/`) && user.role !== "premium") {
+      return res.status(403).json({ error: "You can only delete your own documents" });
+    }
+
     await deleteDocument(blobName);
     res.json({ success: true });
   } catch (err) {
