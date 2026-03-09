@@ -6,6 +6,7 @@ const answerRoute = require("./routes/answer");
 const documentsRoute = require("./routes/documents");
 const sessionsRoute = require("./routes/sessions");
 const userRoute = require("./routes/user");
+const transcribeRoute = require("./routes/transcribe");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -27,6 +28,7 @@ app.use("/api", answerRoute);
 app.use("/api", documentsRoute);
 app.use("/api", sessionsRoute);
 app.use("/api", userRoute);
+app.use("/api", transcribeRoute);
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Examora backend v3.0.0 running on port ${PORT}`);

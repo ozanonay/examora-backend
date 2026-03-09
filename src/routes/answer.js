@@ -11,7 +11,14 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 
 router.post("/answer", authenticateRequest, upload.single("audio"), async (req, res) => {
   try {
     const audioFile = req.file;
-    const { specialty, context, sessionId, documentBlobName } = req.body;
+    const {
+      specialty,
+      context,
+      documentContext: inlineDocText,   // iOS'tan gelen inline belge metni
+      sessionId,
+      documentBlobName,
+      responseLanguage,                  // ISO 639-1 kodu — "tr", "de", "en" vb.
+    } = req.body;
     const user = req.user;
 
     if (!audioFile || !audioFile.buffer || audioFile.buffer.length < 1000) {
@@ -33,15 +40,17 @@ router.post("/answer", authenticateRequest, upload.single("audio"), async (req, 
 
     console.log(`[${user.uid}] Question: "${detectedQuestion.substring(0, 80)}..."`);
 
-    // 2. Load document context if selected and user has permission
-    let documentContext = "";
+    // 2. Belge context'ini çöz: önce Azure Blob, yoksa iOS'tan gelen inline metin
+    let resolvedDocumentContext = inlineDocText || "";
     if (documentBlobName && canUseDocuments(user.role)) {
       try {
         console.log(`[${user.uid}] Loading document: ${documentBlobName}`);
-        documentContext = await extractTextFromBlob(documentBlobName);
-        console.log(`[${user.uid}] Document loaded: ${documentContext.length} chars`);
+        resolvedDocumentContext = await extractTextFromBlob(documentBlobName);
+        console.log(`[${user.uid}] Document loaded: ${resolvedDocumentContext.length} chars`);
       } catch (err) {
         console.warn(`[${user.uid}] Document load failed: ${err.message}`);
+        // Blob yüklenemezse inline metin varsa ona geri dön
+        resolvedDocumentContext = inlineDocText || "";
       }
     } else if (documentBlobName && !canUseDocuments(user.role)) {
       console.log(`[${user.uid}] Document requested but user role "${user.role}" cannot use documents`);
@@ -52,7 +61,8 @@ router.post("/answer", authenticateRequest, upload.single("audio"), async (req, 
       question: detectedQuestion,
       specialty,
       context: context || "",
-      documentContext,
+      documentContext: resolvedDocumentContext,
+      responseLanguage: responseLanguage || "tr",
     });
 
     // 4. Save exam session for pro/premium users

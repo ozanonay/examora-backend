@@ -5,6 +5,7 @@ const { canUploadDocuments } = require("../services/firebase");
 const {
   uploadDocument,
   listDocumentsForUser,
+  listAllDocumentsForSpecialty,
   listSharedDocuments,
   deleteDocument,
 } = require("../services/blobStorage");
@@ -60,7 +61,10 @@ router.post("/documents", authenticateRequest, upload.single("file"), async (req
   }
 });
 
-// List documents for current user (own + shared) by specialty
+// List documents by specialty
+// - Premium: ALL documents for specialty (every user's uploads)
+// - Pro:     own docs + shared docs
+// - Free/Anon: shared docs only
 router.get("/documents", authenticateRequest, async (req, res) => {
   try {
     const user = req.user;
@@ -70,7 +74,20 @@ router.get("/documents", authenticateRequest, async (req, res) => {
       return res.status(400).json({ error: "specialty query parameter is required" });
     }
 
-    const docs = await listDocumentsForUser(user.uid, specialty);
+    let docs;
+
+    if (user.role === "premium") {
+      // Premium: tüm belgeler (tüm kullanıcıların yüklemeleri)
+      docs = await listAllDocumentsForSpecialty(specialty, user.uid);
+    } else if (user.role === "pro") {
+      // Pro: kendi belgesi + paylaşılan belgeler
+      const rawDocs = await listDocumentsForUser(user.uid, specialty);
+      docs = rawDocs.map((d) => ({ ...d, isMine: d.uploadedBy === user.uid }));
+    } else {
+      // Free / anon: sadece paylaşılan belgeler
+      const rawDocs = await listSharedDocuments(specialty);
+      docs = rawDocs.map((d) => ({ ...d, isMine: false }));
+    }
 
     res.json({
       count: docs.length,
@@ -80,10 +97,10 @@ router.get("/documents", authenticateRequest, async (req, res) => {
         specialty: d.specialty,
         uploaded_by: d.uploadedBy,
         uploaded_at: d.uploadedAt,
-        shared: d.shared,
+        shared: d.shared ?? false,
         page_count: d.pageCount,
         size: d.size,
-        is_mine: d.uploadedBy === user.uid,
+        is_mine: d.isMine ?? (d.uploadedBy === user.uid),
       })),
     });
   } catch (err) {

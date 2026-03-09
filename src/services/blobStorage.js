@@ -130,6 +130,37 @@ async function listSharedDocuments(specialty) {
 }
 
 /**
+ * List ALL documents under a specialty prefix (Premium users only).
+ * Returns every user's uploads + shared docs for that specialty.
+ * @param {string} specialty - e.g. "Medicine"
+ * @param {string} requestingUserId - used to set is_mine flag
+ */
+async function listAllDocumentsForSpecialty(specialty, requestingUserId) {
+  const container = await ensureContainer(DOCS_CONTAINER);
+  const docs = [];
+
+  // List everything under {specialty}/
+  const prefix = `${specialty}/`;
+
+  for await (const blob of container.listBlobsFlat({ prefix, includeMetadata: true })) {
+    const meta = blob.metadata || {};
+    docs.push({
+      blobName: blob.name,
+      originalName: meta.originalname || blob.name.split("/").pop(),
+      specialty: meta.specialty || specialty,
+      uploadedBy: meta.uploadedby || "unknown",
+      uploadedAt: meta.uploadedat || "",
+      shared: meta.shared === "true",
+      pageCount: parseInt(meta.pagecount || "0", 10),
+      size: blob.properties.contentLength,
+      isMine: meta.uploadedby === requestingUserId,
+    });
+  }
+
+  return docs;
+}
+
+/**
  * Extract text from a PDF blob for LLM consumption
  * Handles large PDFs by truncating to token-safe length
  */
@@ -239,6 +270,7 @@ module.exports = {
   uploadDocument,
   listDocumentsForUser,
   listSharedDocuments,
+  listAllDocumentsForSpecialty,
   extractTextFromBlob,
   deleteDocument,
   saveExamSession,
