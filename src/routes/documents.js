@@ -75,10 +75,14 @@ router.get("/documents", validateApiKey, async (req, res) => {
   }
 });
 
-// Delete a document
-router.delete("/documents/:blobName(*)", validateApiKey, async (req, res) => {
+// Delete a document (blob name sent in body since it contains slashes)
+router.delete("/documents", validateApiKey, async (req, res) => {
   try {
-    await deleteDocument(req.params.blobName);
+    const { blobName } = req.body;
+    if (!blobName) {
+      return res.status(400).json({ error: "blobName is required" });
+    }
+    await deleteDocument(blobName);
     res.json({ success: true });
   } catch (err) {
     console.error("Document delete error:", err.message);
