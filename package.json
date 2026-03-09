@@ -1,0 +1,20 @@
+{
+  "name": "examora-backend",
+  "version": "1.0.0",
+  "description": "Examora AI backend — speech transcription, translation, expert answers",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "cors": "^2.8.6",
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1",
+    "multer": "^2.1.1",
+    "openai": "^6.27.0"
+  }
+}
