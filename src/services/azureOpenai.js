@@ -1,22 +1,27 @@
-const OpenAI = require("openai");
+const { AzureOpenAI } = require("openai");
 const fs = require("fs");
 const path = require("path");
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const client = new AzureOpenAI({
+  endpoint: process.env.AZURE_OPENAI_ENDPOINT,
+  apiKey: process.env.AZURE_OPENAI_API_KEY,
+  apiVersion: process.env.AZURE_OPENAI_API_VERSION || "2024-12-01-preview",
+});
+
+const WHISPER_DEPLOYMENT = process.env.AZURE_WHISPER_DEPLOYMENT || "whisper";
+const GPT_DEPLOYMENT = process.env.AZURE_GPT_DEPLOYMENT || "gpt-4o";
 
 /**
- * Transcribe audio using Whisper
- * @param {Buffer} audioBuffer - WAV audio data
- * @returns {Promise<string>} - Transcribed text
+ * Transcribe audio via Azure OpenAI Whisper
  */
 async function transcribeAudio(audioBuffer) {
   const tmpPath = path.join("/tmp", `examora-${Date.now()}.wav`);
   fs.writeFileSync(tmpPath, audioBuffer);
 
   try {
-    const response = await openai.audio.transcriptions.create({
+    const response = await client.audio.transcriptions.create({
       file: fs.createReadStream(tmpPath),
-      model: "whisper-1",
+      model: WHISPER_DEPLOYMENT,
       language: "en",
     });
     return response.text || "";
@@ -26,15 +31,18 @@ async function transcribeAudio(audioBuffer) {
 }
 
 /**
- * Generate expert answer based on specialty, context and detected question
+ * Generate expert answer via Azure OpenAI GPT
  * @param {object} params
- * @returns {Promise<{turkishAnswer: string, englishAnswer: string}>}
+ * @param {string} params.question
+ * @param {string} params.specialty
+ * @param {string} params.context - user manual context
+ * @param {string} [params.documentContext] - extracted PDF text
  */
-async function generateAnswer({ question, specialty, context }) {
-  const systemPrompt = buildSystemPrompt(specialty, context);
+async function generateAnswer({ question, specialty, context, documentContext }) {
+  const systemPrompt = buildSystemPrompt(specialty, context, documentContext);
 
-  const response = await openai.chat.completions.create({
-    model: "gpt-4o",
+  const response = await client.chat.completions.create({
+    model: GPT_DEPLOYMENT,
     temperature: 0.4,
     max_tokens: 2000,
     messages: [
@@ -57,14 +65,15 @@ async function generateAnswer({ question, specialty, context }) {
   }
 }
 
-function buildSystemPrompt(specialty, context) {
+function buildSystemPrompt(specialty, context, documentContext) {
   let prompt = `You are Examora, an AI assistant specialized in "${specialty}".
 Your job is to provide the most accurate, concise, and professionally appropriate answer to the user's question.
 
 RULES:
 - Follow globally accepted procedures and guidelines for the "${specialty}" field.
 - Be precise, evidence-based, and professional.
-- If context/notes are provided, incorporate them into your answer.
+- If reference documents are provided, prioritize information from those documents while supplementing with your general knowledge.
+- If user notes/context are provided, incorporate them as well.
 - Answer in BOTH Turkish and English.
 
 OUTPUT FORMAT (strict JSON):
@@ -75,8 +84,13 @@ OUTPUT FORMAT (strict JSON):
 
 Provide only the JSON object, no markdown, no extra text.`;
 
+  if (documentContext && documentContext.trim()) {
+    const truncated = documentContext.substring(0, 12000);
+    prompt += `\n\nREFERENCE DOCUMENT (specialty knowledge base):\n${truncated}`;
+  }
+
   if (context && context.trim()) {
-    prompt += `\n\nADDITIONAL CONTEXT FROM USER:\n${context}`;
+    prompt += `\n\nADDITIONAL USER NOTES:\n${context}`;
   }
 
   return prompt;

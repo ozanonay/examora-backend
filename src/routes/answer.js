@@ -1,7 +1,8 @@
 const express = require("express");
 const multer = require("multer");
 const { validateApiKey } = require("../middleware/auth");
-const { transcribeAudio, generateAnswer } = require("../services/openai");
+const { transcribeAudio, generateAnswer } = require("../services/azureOpenai");
+const { extractTextFromBlob } = require("../services/blobStorage");
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
@@ -9,7 +10,7 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 
 router.post("/answer", validateApiKey, upload.single("audio"), async (req, res) => {
   try {
     const audioFile = req.file;
-    const { specialty, context, sessionId } = req.body;
+    const { specialty, context, sessionId, documentBlobName } = req.body;
 
     if (!audioFile || !audioFile.buffer || audioFile.buffer.length < 1000) {
       return res.status(400).json({ error: "Audio file is missing or too short" });
@@ -30,14 +31,27 @@ router.post("/answer", validateApiKey, upload.single("audio"), async (req, res) 
 
     console.log(`[${sessionId || "no-session"}] Question: "${detectedQuestion.substring(0, 80)}..."`);
 
-    // 2. Generate answer in both languages
+    // 2. If a specialty PDF is selected, extract its text
+    let documentContext = "";
+    if (documentBlobName) {
+      try {
+        console.log(`[${sessionId || "no-session"}] Loading document: ${documentBlobName}`);
+        documentContext = await extractTextFromBlob(documentBlobName);
+        console.log(`[${sessionId || "no-session"}] Document loaded: ${documentContext.length} chars`);
+      } catch (err) {
+        console.warn(`[${sessionId || "no-session"}] Document load failed: ${err.message}`);
+      }
+    }
+
+    // 3. Generate answer (Azure OpenAI GPT + document context)
     const { turkishAnswer, englishAnswer } = await generateAnswer({
       question: detectedQuestion,
-      specialty: specialty,
+      specialty,
       context: context || "",
+      documentContext,
     });
 
-    // 3. Return response (snake_case for iOS JSONDecoder convertFromSnakeCase)
+    // 4. Return response (snake_case for iOS)
     res.json({
       detected_question: detectedQuestion,
       turkish_answer: turkishAnswer,
