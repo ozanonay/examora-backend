@@ -33,7 +33,7 @@ router.post("/documents", authenticateRequest, upload.single("file"), async (req
     }
 
     const file = req.file;
-    const { specialty, shared } = req.body;
+    const { specialty, shared, topic } = req.body;
 
     if (!file) {
       return res.status(400).json({ error: "PDF file is required" });
@@ -41,11 +41,14 @@ router.post("/documents", authenticateRequest, upload.single("file"), async (req
     if (!specialty) {
       return res.status(400).json({ error: "Specialty field is required" });
     }
+    if (!topic || !topic.trim()) {
+      return res.status(400).json({ error: "Topic field is required" });
+    }
 
-    console.log(`[${user.uid}] Upload: ${file.originalname} (${(file.size / 1024).toFixed(0)}KB) → ${specialty}`);
+    console.log(`[${user.uid}] Upload: ${file.originalname} (${(file.size / 1024).toFixed(0)}KB) → ${specialty} [${topic}]`);
 
     const isShared = shared === "true";
-    const result = await uploadDocument(file.buffer, file.originalname, specialty, user.uid, isShared);
+    const result = await uploadDocument(file.buffer, file.originalname, specialty, user.uid, isShared, topic.trim());
 
     res.json({
       success: true,
@@ -53,6 +56,7 @@ router.post("/documents", authenticateRequest, upload.single("file"), async (req
       url: result.url,
       original_name: file.originalname,
       specialty,
+      topic: topic.trim(),
       shared: isShared,
     });
   } catch (err) {
@@ -95,6 +99,7 @@ router.get("/documents", authenticateRequest, async (req, res) => {
         blob_name: d.blobName,
         original_name: d.originalName,
         specialty: d.specialty,
+        topic: d.topic || "",
         uploaded_by: d.uploadedBy,
         uploaded_at: d.uploadedAt,
         shared: d.shared ?? false,

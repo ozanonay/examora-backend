@@ -22,17 +22,26 @@ const { AzureOpenAI } = require("openai");
 
 const whisperEndpoint = process.env.AZURE_WHISPER_ENDPOINT;
 const whisperApiKey = process.env.AZURE_WHISPER_API_KEY;
+const openaiEndpoint = process.env.AZURE_OPENAI_ENDPOINT;
+const openaiKey = process.env.AZURE_OPENAI_API_KEY;
+
 let client;
 if (whisperEndpoint && whisperApiKey) {
   const baseUrl = new URL(whisperEndpoint).origin;
   const apiVersion = new URL(whisperEndpoint).searchParams.get("api-version") || "2024-06-01";
   client = new AzureOpenAI({ endpoint: baseUrl, apiKey: whisperApiKey, apiVersion });
-} else {
+} else if (openaiEndpoint && openaiKey) {
   client = new AzureOpenAI({
-    endpoint: process.env.AZURE_OPENAI_ENDPOINT,
-    apiKey: process.env.AZURE_OPENAI_API_KEY,
+    endpoint: openaiEndpoint,
+    apiKey: openaiKey,
     apiVersion: process.env.AZURE_OPENAI_API_VERSION || "2024-12-01-preview",
   });
+} else {
+  console.error("Missing credentials. Add examora-backend/.env with either:");
+  console.error("  AZURE_WHISPER_ENDPOINT + AZURE_WHISPER_API_KEY");
+  console.error("  or AZURE_OPENAI_ENDPOINT + AZURE_OPENAI_API_KEY");
+  console.error("(Copy from Railway → Variables)");
+  process.exit(1);
 }
 
 const WHISPER_DEPLOYMENT = process.env.AZURE_WHISPER_DEPLOYMENT || "whisper";

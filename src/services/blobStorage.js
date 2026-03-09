@@ -28,8 +28,9 @@ async function ensureContainer(name) {
 
 /**
  * Upload a PDF document
+ * @param {string} topic - Kullanıcının girdiği konu etiketi (sınıflandırma için)
  */
-async function uploadDocument(fileBuffer, originalName, specialty, userId, isShared = false) {
+async function uploadDocument(fileBuffer, originalName, specialty, userId, isShared = false, topic = "") {
   const container = await ensureContainer(DOCS_CONTAINER);
 
   const sanitized = originalName.replace(/[^a-zA-Z0-9._-]/g, "_");
@@ -45,11 +46,12 @@ async function uploadDocument(fileBuffer, originalName, specialty, userId, isSha
       originalname: originalName,
       uploadedat: new Date().toISOString(),
       shared: isShared ? "true" : "false",
+      topic: topic || "",
       pagecount: "0",
     },
   });
 
-  // Extract text and store page count in metadata
+  // Extract text and store page count in metadata (topic preserved)
   try {
     const pdfData = await pdfParse(fileBuffer);
     const pageCount = pdfData.numpages || 0;
@@ -59,11 +61,12 @@ async function uploadDocument(fileBuffer, originalName, specialty, userId, isSha
       originalname: originalName,
       uploadedat: new Date().toISOString(),
       shared: isShared ? "true" : "false",
+      topic: topic || "",
       pagecount: String(pageCount),
       textlength: String(pdfData.text?.length || 0),
     });
   } catch (_) {
-    // PDF parse failed — metadata stays with pagecount=0
+    // PDF parse failed — metadata stays with pagecount=0, topic preserved
   }
 
   return { blobName, url: blockBlob.url };
@@ -91,6 +94,7 @@ async function listDocumentsForUser(userId, specialty) {
         blobName: blob.name,
         originalName: meta.originalname || blob.name.split("/").pop(),
         specialty: meta.specialty || "unknown",
+        topic: meta.topic || "",
         uploadedBy: meta.uploadedby || "unknown",
         uploadedAt: meta.uploadedat || "",
         shared: meta.shared === "true",
@@ -119,6 +123,7 @@ async function listSharedDocuments(specialty) {
       blobName: blob.name,
       originalName: meta.originalname || blob.name.split("/").pop(),
       specialty: meta.specialty || "unknown",
+      topic: meta.topic || "",
       uploadedBy: meta.uploadedby || "unknown",
       uploadedAt: meta.uploadedat || "",
       pageCount: parseInt(meta.pagecount || "0", 10),
@@ -148,6 +153,7 @@ async function listAllDocumentsForSpecialty(specialty, requestingUserId) {
       blobName: blob.name,
       originalName: meta.originalname || blob.name.split("/").pop(),
       specialty: meta.specialty || specialty,
+      topic: meta.topic || "",
       uploadedBy: meta.uploadedby || "unknown",
       uploadedAt: meta.uploadedat || "",
       shared: meta.shared === "true",

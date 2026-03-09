@@ -1,4 +1,4 @@
-const { verifyToken, getUserRole } = require("../services/firebase");
+const { verifyToken } = require("../services/firebase");
 
 /**
  * Validate API key (for service-to-service calls)
@@ -21,6 +21,9 @@ function validateApiKey(req, res, next) {
 /**
  * Authenticate Firebase user via Bearer token
  * Sets req.user = { uid, email, role }
+ *
+ * Role is read directly from the token's custom claims — no extra admin API call.
+ * verifyIdToken() works with just projectId; no service account credential required.
  */
 async function authenticateUser(req, res, next) {
   const authHeader = req.headers.authorization;
@@ -32,7 +35,10 @@ async function authenticateUser(req, res, next) {
 
   try {
     const decoded = await verifyToken(idToken);
-    const role = await getUserRole(decoded.uid);
+
+    // Role is embedded in the token's custom claims (set via setUserRole / Firebase Admin).
+    // Falls back to "free" for new users who don't have a role claim yet.
+    const role = decoded.role || "free";
 
     req.user = {
       uid: decoded.uid,
