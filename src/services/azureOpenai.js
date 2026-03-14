@@ -121,12 +121,23 @@ function buildSystemPrompt(specialty, context, documentContext, responseLanguage
       ? `  "turkish_answer": "...",  // Answer in English\n  "english_answer": "..."   // Answer in English (same language)`
       : `  "turkish_answer": "...",  // Answer in ${primaryLang}\n  "english_answer": "..."   // Answer in English`;
 
-  let prompt = `You are Examora, an AI assistant specialized in "${specialty}".
-Your job is to provide the most accurate, concise, and professionally appropriate answer to the user's question.
+  // "General" uzmanlık alanı: yardımcı ama uzman tavsiyesi verme
+  const isGeneral = specialty === "General";
+
+  const coreRules = isGeneral
+    ? `- Answer general knowledge questions helpfully, clearly, and accurately.
+- You are a knowledgeable general assistant, NOT a specialist in any specific professional domain.
+- IMPORTANT: For questions that require specialist expertise — including but not limited to medical diagnosis/treatment, dental procedures, legal advice, engineering calculations, financial investment advice, or any other regulated professional domain — you MUST acknowledge the question, provide general educational context if appropriate, and explicitly recommend that the user consult a qualified professional for their specific situation.
+- Do NOT provide specific diagnostic conclusions, legal opinions, engineering specifications, or financial recommendations.
+- Be precise, evidence-based, and helpful within these boundaries.`
+    : `- Follow globally accepted procedures and guidelines for the "${specialty}" field.
+- Be precise, evidence-based, and professional.`;
+
+  let prompt = `You are Examora, an AI assistant${isGeneral ? " for general knowledge questions" : ` specialized in "${specialty}"`}.
+Your job is to provide the most accurate, concise, and appropriate answer to the user's question.
 
 RULES:
-- Follow globally accepted procedures and guidelines for the "${specialty}" field.
-- Be precise, evidence-based, and professional.
+${coreRules}
 - If reference documents are provided, prioritize information from those documents while supplementing with your general knowledge.
 - If user notes/context are provided, incorporate them as well.
 - ${langInstruction}
@@ -153,4 +164,57 @@ Provide only the JSON object, no markdown, no extra text.`;
   return prompt;
 }
 
-module.exports = { transcribeAudio, generateAnswer };
+/**
+ * Hızlı EN→TR çeviri (canlı transkript için). Kısa yanıt, düşük token.
+ */
+async function translateToTurkish(englishText) {
+  const trimmed = String(englishText).trim();
+  if (!trimmed) return "";
+
+  const response = await client.chat.completions.create({
+    model: GPT_DEPLOYMENT,
+    temperature: 0.2,
+    max_tokens: 300,
+    messages: [
+      {
+        role: "system",
+        content: "Translate the following English text to Turkish. Reply with only the translation, no explanation or punctuation unless needed.",
+      },
+      { role: "user", content: trimmed },
+    ],
+  });
+
+  const text = response.choices[0]?.message?.content?.trim() ?? "";
+  return text;
+}
+
+/**
+ * TR → hedef dil çeviri (localization için)
+ * @param {string} text - Türkçe metin
+ * @param {string} targetLang - "en" | "de" | "fr"
+ */
+async function translateToTargetLanguage(text, targetLang) {
+  const trimmed = String(text).trim();
+  if (!trimmed) return "";
+
+  const langNames = { en: "English", de: "German", fr: "French" };
+  const target = langNames[targetLang] || "English";
+
+  const response = await client.chat.completions.create({
+    model: GPT_DEPLOYMENT,
+    temperature: 0.3,
+    max_tokens: 500,
+    messages: [
+      {
+        role: "system",
+        content: `Translate the following Turkish app string to ${target}. Keep the same tone. Preserve placeholders like %@, %d, %s exactly. Return ONLY the translation, no quotes or explanation.`,
+      },
+      { role: "user", content: trimmed },
+    ],
+  });
+
+  const result = response.choices[0]?.message?.content?.trim() ?? "";
+  return result.replace(/^["']|["']$/g, "");
+}
+
+module.exports = { transcribeAudio, generateAnswer, translateToTurkish, translateToTargetLanguage };

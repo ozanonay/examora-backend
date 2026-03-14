@@ -27,7 +27,7 @@ async function ensureContainer(name) {
 // Shared docs: {specialty}/shared/{timestamp}-{filename}.pdf
 
 /**
- * Upload a PDF document
+ * Upload a PDF or TXT document
  * @param {string} topic - Kullanıcının girdiği konu etiketi (sınıflandırma için)
  */
 async function uploadDocument(fileBuffer, originalName, specialty, userId, isShared = false, topic = "") {
@@ -38,8 +38,12 @@ async function uploadDocument(fileBuffer, originalName, specialty, userId, isSha
   const blobName = `${folder}/${Date.now()}-${sanitized}`;
   const blockBlob = container.getBlockBlobClient(blobName);
 
+  const ext = (originalName || "").toLowerCase().split(".").pop();
+  const isTxt = ext === "txt";
+  const contentType = isTxt ? "text/plain" : "application/pdf";
+
   await blockBlob.upload(fileBuffer, fileBuffer.length, {
-    blobHTTPHeaders: { blobContentType: "application/pdf" },
+    blobHTTPHeaders: { blobContentType: contentType },
     metadata: {
       specialty,
       uploadedby: userId,
@@ -47,14 +51,30 @@ async function uploadDocument(fileBuffer, originalName, specialty, userId, isSha
       uploadedat: new Date().toISOString(),
       shared: isShared ? "true" : "false",
       topic: topic || "",
+      filetype: isTxt ? "txt" : "pdf",
       pagecount: "0",
     },
   });
 
-  // Extract text and store page count in metadata (topic preserved)
+  // Metadata'yı metin uzunluğu ile güncelle (PDF: pdf-parse; TXT: doğrudan oku)
   try {
-    const pdfData = await pdfParse(fileBuffer);
-    const pageCount = pdfData.numpages || 0;
+    let pageCount = 0;
+    let textLength = 0;
+
+    if (isTxt) {
+      // TXT dosyası: parse gerektirmez, doğrudan UTF-8 oku
+      const text = fileBuffer.toString("utf-8");
+      textLength = text.length;
+      // Satır sayısını sayfa proxy olarak kullan (her ~50 satır ≈ 1 sayfa)
+      const lineCount = (text.match(/\n/g) || []).length + 1;
+      pageCount = Math.max(1, Math.round(lineCount / 50));
+    } else {
+      // PDF dosyası: pdf-parse ile metin çıkar
+      const pdfData = await pdfParse(fileBuffer);
+      pageCount = pdfData.numpages || 0;
+      textLength = pdfData.text?.length || 0;
+    }
+
     await blockBlob.setMetadata({
       specialty,
       uploadedby: userId,
@@ -62,11 +82,12 @@ async function uploadDocument(fileBuffer, originalName, specialty, userId, isSha
       uploadedat: new Date().toISOString(),
       shared: isShared ? "true" : "false",
       topic: topic || "",
+      filetype: isTxt ? "txt" : "pdf",
       pagecount: String(pageCount),
-      textlength: String(pdfData.text?.length || 0),
+      textlength: String(textLength),
     });
   } catch (_) {
-    // PDF parse failed — metadata stays with pagecount=0, topic preserved
+    // Parse başarısız — metadata pagecount=0 ile kalır
   }
 
   return { blobName, url: blockBlob.url };
@@ -93,6 +114,7 @@ async function listDocumentsForUser(userId, specialty) {
       docs.push({
         blobName: blob.name,
         originalName: meta.originalname || blob.name.split("/").pop(),
+        fileType: meta.filetype || "pdf",
         specialty: meta.specialty || "unknown",
         topic: meta.topic || "",
         uploadedBy: meta.uploadedby || "unknown",
@@ -122,6 +144,7 @@ async function listSharedDocuments(specialty) {
     docs.push({
       blobName: blob.name,
       originalName: meta.originalname || blob.name.split("/").pop(),
+      fileType: meta.filetype || "pdf",
       specialty: meta.specialty || "unknown",
       topic: meta.topic || "",
       uploadedBy: meta.uploadedby || "unknown",
@@ -152,6 +175,7 @@ async function listAllDocumentsForSpecialty(specialty, requestingUserId) {
     docs.push({
       blobName: blob.name,
       originalName: meta.originalname || blob.name.split("/").pop(),
+      fileType: meta.filetype || "pdf",
       specialty: meta.specialty || specialty,
       topic: meta.topic || "",
       uploadedBy: meta.uploadedby || "unknown",
@@ -167,8 +191,9 @@ async function listAllDocumentsForSpecialty(specialty, requestingUserId) {
 }
 
 /**
- * Extract text from a PDF blob for LLM consumption
- * Handles large PDFs by truncating to token-safe length
+ * Extract text from a PDF or TXT blob for LLM consumption.
+ * Handles large files (300-400 sayfa) by truncating to token-safe length.
+ * TXT dosyaları parse gerektirmez; PDF'ler pdf-parse ile işlenir.
  */
 async function extractTextFromBlob(blobName) {
   const container = await ensureContainer(DOCS_CONTAINER);
@@ -181,14 +206,30 @@ async function extractTextFromBlob(blobName) {
   }
   const buffer = Buffer.concat(chunks);
 
-  const pdfData = await pdfParse(buffer);
-  const fullText = pdfData.text || "";
+  // Dosya tipini metadata veya blob adından belirle
+  const ext = blobName.toLowerCase().split(".").pop();
+  const isTxt = ext === "txt";
 
-  // Truncate to ~15000 chars (~4000 tokens) for LLM context window safety
+  let fullText = "";
+
+  if (isTxt) {
+    // TXT: doğrudan oku
+    fullText = buffer.toString("utf-8");
+  } else {
+    // PDF: pdf-parse
+    const pdfData = await pdfParse(buffer);
+    fullText = pdfData.text || "";
+  }
+
+  // LLM context penceresi için ~15000 karakter (~4000 token) ile sınırla
+  // 300-400 sayfalık dökümanlar için bu kırpma kaçınılmazdır
   const MAX_CHARS = 15000;
   if (fullText.length <= MAX_CHARS) return fullText;
 
-  return fullText.substring(0, MAX_CHARS) + `\n\n[... doküman ${MAX_CHARS} karakterde kesildi, toplam ${fullText.length} karakter]`;
+  return (
+    fullText.substring(0, MAX_CHARS) +
+    `\n\n[... doküman ${MAX_CHARS} karakterde kesildi, toplam ${fullText.length} karakter]`
+  );
 }
 
 /**
