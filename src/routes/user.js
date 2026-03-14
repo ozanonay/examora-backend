@@ -13,23 +13,22 @@ router.get("/user/me", authenticateRequest, async (req, res) => {
   });
 });
 
-// Delete user account
-// - Firebase Auth kaydı silinir
-// - Firestore verileri (users/{uid} + alt koleksiyonlar) silinir
-// - Azure blob'ları (dökümanlar, session kayıtları) KORUNUR — bu dosyalar şirkete aittir
+// Delete user account (Firestore only — Firebase Auth iOS client tarafından silinir)
+// - Firestore verileri (users/{uid} + tüm alt koleksiyonlar) silinir
+// - Azure blob'ları (dökümanlar, session kayıtları) KORUNUR
+// - Firebase Auth silme işlemi iOS tarafında yapılır (re-auth sonrası user.delete())
 // - Sadece kimliği doğrulanmış, anonim olmayan kullanıcılar bu endpoint'i kullanabilir
 router.delete("/user/me", authenticateUser, async (req, res) => {
   const { uid, email } = req.user;
 
-  // Anonim hesaplar bu endpoint'i kullanamaz
   if (!uid || !email) {
     return res.status(400).json({ error: "Anonymous accounts cannot be deleted via this endpoint" });
   }
 
   try {
-    // 1. Firestore alt koleksiyonları sil (usage geçmişi)
     const userRef = db.collection("users").doc(uid);
 
+    // Alt koleksiyonları recursive sil
     async function deleteCollection(colRef, batchSize = 100) {
       const snapshot = await colRef.limit(batchSize).get();
       if (snapshot.empty) return;
@@ -40,14 +39,13 @@ router.delete("/user/me", authenticateUser, async (req, res) => {
     }
 
     await deleteCollection(userRef.collection("usage"));
-
-    // 2. Ana kullanıcı dokümanını sil
+    await deleteCollection(userRef.collection("docUploads"));
     await userRef.delete();
 
-    // 3. Firebase Auth kaydını sil
-    await auth.deleteUser(uid);
+    // NOT: Firebase Auth kaydı iOS tarafından silinir.
+    // Backend burada auth.deleteUser() çağırmaz — çift silme hatasını önler.
 
-    console.log(`[DeleteAccount] Kullanıcı silindi: ${uid} (${email})`);
+    console.log(`[DeleteAccount] Firestore verisi silindi: ${uid} (${email})`);
     res.json({ success: true });
   } catch (err) {
     console.error(`[DeleteAccount] Hata (uid=${uid}):`, err.message);
