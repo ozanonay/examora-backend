@@ -13,6 +13,48 @@ router.get("/user/me", authenticateRequest, async (req, res) => {
   });
 });
 
+// Sync / upsert user document in Firestore.
+// iOS calls this after every successful login or registration so that
+// the users/{uid} document always exists and is up-to-date.
+// Body (all optional): { displayName, provider }
+router.post("/user/sync", authenticateUser, async (req, res) => {
+  const { uid, email, role } = req.user;
+  const { displayName, provider } = req.body || {};
+
+  try {
+    const userRef = db.collection("users").doc(uid);
+    const now = new Date();
+
+    // merge: true → only supplied fields overwrite; missing fields are untouched.
+    await userRef.set(
+      {
+        uid,
+        email: email || "",
+        displayName: displayName || "",
+        provider: provider || "unknown",
+        role,
+        lastSeenAt: now,
+        // createdAt is written only on first call (merge won't overwrite it
+        // if it already exists — handled by set+merge semantics for
+        // server-supplied timestamps we DON'T want to stomp).
+      },
+      { merge: true }
+    );
+
+    // Write createdAt only if the document didn't exist before.
+    const snap = await userRef.get();
+    if (!snap.data()?.createdAt) {
+      await userRef.update({ createdAt: now });
+    }
+
+    console.log(`[UserSync] Firestore user doc upserted: ${uid} (${email})`);
+    res.json({ success: true });
+  } catch (err) {
+    console.error(`[UserSync] Error (uid=${uid}):`, err.message);
+    res.status(500).json({ error: "Failed to sync user document." });
+  }
+});
+
 // Delete user account (Firestore only — Firebase Auth iOS client tarafından silinir)
 // - Firestore verileri (users/{uid} + tüm alt koleksiyonlar) silinir
 // - Azure blob'ları (dökümanlar, session kayıtları) KORUNUR
