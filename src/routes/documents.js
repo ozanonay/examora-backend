@@ -104,7 +104,8 @@ router.post("/documents", authenticateRequest, upload.single("file"), async (req
     );
 
     // 3. Azure'a yükle
-    const isShared = shared === "true";
+    // iOS multipart formu "true"/"false" string gönderir; doğrudan boolean da gelebilir.
+    const isShared = shared === "true" || shared === true;
     const result = await uploadDocument(
       file.buffer,
       file.originalname,
@@ -227,8 +228,9 @@ router.delete("/documents", authenticateRequest, async (req, res) => {
       return res.status(400).json({ error: "blobName zorunludur" });
     }
 
-    // Sahiplik kontrolü: blob yolu uid içermeli; premium kural dışı
-    if (!blobName.includes(`/${user.uid}/`) && user.role !== "premium") {
+    // Sahiplik kontrolü: blob yolu uid içermeli.
+    // Premium dahil hiçbir kullanıcı başkasının dökümanını silemez.
+    if (!blobName.includes(`/${user.uid}/`)) {
       return res.status(403).json({ error: "Yalnızca kendi dökümanlarınızı silebilirsiniz" });
     }
 

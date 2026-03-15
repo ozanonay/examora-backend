@@ -25,7 +25,11 @@ router.post("/user/sync", authenticateUser, async (req, res) => {
     const userRef = db.collection("users").doc(uid);
     const now = new Date();
 
-    // merge: true → only supplied fields overwrite; missing fields are untouched.
+    // Önce dokümanın mevcut olup olmadığını kontrol et.
+    // createdAt yalnızca ilk kayıtta yazılır; mevcut değer asla üzerine yazılmaz.
+    const snap = await userRef.get();
+    const isNew = !snap.exists;
+
     await userRef.set(
       {
         uid,
@@ -34,18 +38,10 @@ router.post("/user/sync", authenticateUser, async (req, res) => {
         provider: provider || "unknown",
         role,
         lastSeenAt: now,
-        // createdAt is written only on first call (merge won't overwrite it
-        // if it already exists — handled by set+merge semantics for
-        // server-supplied timestamps we DON'T want to stomp).
+        ...(isNew ? { createdAt: now } : {}),
       },
       { merge: true }
     );
-
-    // Write createdAt only if the document didn't exist before.
-    const snap = await userRef.get();
-    if (!snap.data()?.createdAt) {
-      await userRef.update({ createdAt: now });
-    }
 
     console.log(`[UserSync] Firestore user doc upserted: ${uid} (${email})`);
     res.json({ success: true });
@@ -92,6 +88,54 @@ router.delete("/user/me", authenticateUser, async (req, res) => {
   } catch (err) {
     console.error(`[DeleteAccount] Hata (uid=${uid}):`, err.message);
     res.status(500).json({ error: "Account deletion failed. Please try again." });
+  }
+});
+
+// Sync StoreKit subscription tier to Firebase custom claims.
+// iOS calls this after every successful purchase and on app launch.
+//
+// Security model:
+//   • Requires a valid Firebase ID token (authenticateUser).
+//   • productId is validated against the known product list; unknown IDs are rejected.
+//   • A user can only set their OWN role (uid from token, not from body).
+//   • Rate-limited to 10 calls / hour per IP by the general limiter in index.js.
+//
+// This approach trusts the client's StoreKit result.  For higher-assurance
+// apps, replace with App Store Server Notifications or JWS verification.
+router.post("/user/subscription/sync", authenticateUser, async (req, res) => {
+  const { uid } = req.user;
+  const { productId } = req.body || {};
+
+  // Known product IDs → role mapping
+  const PRODUCT_ROLE_MAP = {
+    examora_pro_monthly:     "pro",
+    examora_pro_yearly:      "pro",
+    examora_premium_monthly: "premium",
+    examora_premium_yearly:  "premium",
+  };
+
+  // productId = null/undefined/empty → user has no active subscription → free
+  const role = productId ? (PRODUCT_ROLE_MAP[productId] ?? null) : "free";
+
+  if (role === null) {
+    return res.status(400).json({ error: `Unknown productId: ${productId}` });
+  }
+
+  try {
+    // 1. Firebase custom claims güncelle (token'da role claim'i değişir)
+    await setUserRole(uid, role);
+
+    // 2. Firestore user dokümanındaki role alanını da güncelle
+    await db.collection("users").doc(uid).set(
+      { role, subscriptionProductId: productId || null, subscriptionSyncedAt: new Date() },
+      { merge: true }
+    );
+
+    console.log(`[SubSync] uid=${uid} role set to '${role}' (productId=${productId})`);
+    res.json({ success: true, role });
+  } catch (err) {
+    console.error(`[SubSync] Error (uid=${uid}):`, err.message);
+    res.status(500).json({ error: "Failed to sync subscription role." });
   }
 });
 
