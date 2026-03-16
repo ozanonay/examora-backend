@@ -233,6 +233,24 @@ async function extractTextFromBlob(blobName) {
 }
 
 /**
+ * Get document metadata from Azure Blob Storage.
+ * Used for ownership verification before delete operations.
+ * @param {string} blobName
+ * @returns {object|null} metadata object or null if blob doesn't exist
+ */
+async function getDocumentMetadata(blobName) {
+  try {
+    const container = await ensureContainer(DOCS_CONTAINER);
+    const blockBlob = container.getBlockBlobClient(blobName);
+    const props = await blockBlob.getProperties();
+    return props.metadata || null;
+  } catch (err) {
+    if (err.statusCode === 404) return null;
+    throw err;
+  }
+}
+
+/**
  * Delete a document (only owner or admin)
  */
 async function deleteDocument(blobName) {
@@ -319,6 +337,7 @@ module.exports = {
   listSharedDocuments,
   listAllDocumentsForSpecialty,
   extractTextFromBlob,
+  getDocumentMetadata,
   deleteDocument,
   saveExamSession,
   listExamSessions,

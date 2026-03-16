@@ -228,9 +228,25 @@ router.delete("/documents", authenticateRequest, async (req, res) => {
       return res.status(400).json({ error: "blobName zorunludur" });
     }
 
-    // Sahiplik kontrolü: blob yolu uid içermeli.
-    // Premium dahil hiçbir kullanıcı başkasının dökümanını silemez.
-    if (!blobName.includes(`/${user.uid}/`)) {
+    // SECURITY: Reject path traversal attempts
+    if (blobName.includes("..") || blobName.includes("%2e") || blobName.includes("%2E")) {
+      console.warn(`[Security] Path traversal attempt by uid=${user.uid}: ${blobName}`);
+      return res.status(400).json({ error: "Geçersiz dosya yolu" });
+    }
+
+    // SECURITY: Verify ownership via blob metadata (NOT path string matching).
+    // This prevents IDOR attacks where an attacker crafts a blobName that
+    // includes their UID while pointing to someone else's file.
+    const { getDocumentMetadata } = require("../services/blobStorage");
+    const metadata = await getDocumentMetadata(blobName);
+
+    if (!metadata) {
+      return res.status(404).json({ error: "Döküman bulunamadı" });
+    }
+
+    // Only the original uploader can delete their documents
+    if (metadata.uploadedby !== user.uid) {
+      console.warn(`[Security] Unauthorized delete attempt: uid=${user.uid} tried to delete blob owned by ${metadata.uploadedby}`);
       return res.status(403).json({ error: "Yalnızca kendi dökümanlarınızı silebilirsiniz" });
     }
 

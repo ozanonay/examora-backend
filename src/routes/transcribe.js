@@ -24,7 +24,9 @@ router.post("/transcribe", authenticateRequest, upload.single("audio"), async (r
     res.json({ text: text || "" });
   } catch (err) {
     console.error("Transcribe error:", err.message);
-    res.status(500).json({ error: "Transcription failed", detail: err.message });
+    // SECURITY: Never expose internal error details to the client
+    const detail = process.env.NODE_ENV === "production" ? undefined : err.message;
+    res.status(500).json({ error: "Transcription failed", ...(detail && { detail }) });
   }
 });
 

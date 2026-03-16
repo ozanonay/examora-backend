@@ -1,18 +1,21 @@
 const { verifyToken } = require("../services/firebase");
 
 /**
- * Validate API key (for service-to-service calls)
+ * Validate API key (for service-to-service calls).
+ * SECURITY: If API_KEY is not configured, reject the request (fail-closed).
  */
 function validateApiKey(req, res, next) {
   const apiKey = req.headers["x-api-key"];
   const expected = process.env.API_KEY;
 
+  // Fail-closed: if API_KEY is not configured, reject anonymous requests
   if (!expected) {
-    return next();
+    console.warn("[Auth] API_KEY not configured — rejecting anonymous request");
+    return res.status(503).json({ error: "Service not configured for anonymous access" });
   }
 
   if (!apiKey || apiKey !== expected) {
-    return res.status(401).json({ error: "Unauthorized: invalid API key" });
+    return res.status(401).json({ error: "Unauthorized" });
   }
 
   next();
@@ -34,7 +37,6 @@ async function authenticateUser(req, res, next) {
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
     return res.status(401).json({
       error: "Missing or invalid authorization header",
-      hint: "App must send Firebase ID token in Authorization: Bearer <token>",
     });
   }
 
@@ -61,15 +63,16 @@ async function authenticateUser(req, res, next) {
     next();
   } catch (err) {
     console.error("Auth error:", err.message);
+    // SECURITY: Do not expose internal details or configuration hints
     return res.status(401).json({
       error: "Invalid or expired token",
-      hint: "Re-login in the app or check FIREBASE_SERVICE_ACCOUNT_JSON on the server.",
     });
   }
 }
 
 /**
- * Combined auth: tries Firebase token first, falls back to API key
+ * Combined auth: tries Firebase token first, falls back to API key.
+ * SECURITY: Anonymous access requires valid API key (fail-closed).
  */
 function authenticateRequest(req, res, next) {
   const authHeader = req.headers.authorization;

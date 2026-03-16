@@ -19,7 +19,8 @@ router.post("/translate", authenticateRequest, async (req, res) => {
     res.json({ translated });
   } catch (err) {
     console.error("Translate endpoint error:", err.message);
-    res.status(500).json({ error: "Translation failed", detail: err.message });
+    // SECURITY: Never expose internal error details to the client
+    res.status(500).json({ error: "Translation failed" });
   }
 });
 
@@ -50,7 +51,8 @@ router.post("/translate-localization", async (req, res) => {
     res.json({ translated });
   } catch (err) {
     console.error("Translate-localization error:", err.message);
-    res.status(500).json({ error: "Translation failed", detail: err.message });
+    // SECURITY: Never expose internal error details to the client
+    res.status(500).json({ error: "Translation failed" });
   }
 });
 
